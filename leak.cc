@@ -33,7 +33,6 @@ void backup() {
   BACKUP(mmap);
   BACKUP(munmap);
 #undef BACKUP
-  fprintf(stderr, "[LEAK] backup done\n");
 }
 
 constexpr size_t MAX_DEPTH = 64;
@@ -48,7 +47,7 @@ struct AllocationInfo {
     memcpy(backtrace_, backtrace, sizeof(void *) * depth);
   }
   void dump(FILE *fout) {
-    uint64_t buf[512];
+    uint64_t buf[MAX_DEPTH + 3];
     buf[0] = size_;
     buf[1] = (uint64_t)addr_;
     buf[2] = depth_;
@@ -58,12 +57,13 @@ struct AllocationInfo {
   }
 };
 
+bool on = false;
 std::mutex info_mtx;
 std::unordered_map<void *, AllocationInfo> addr2info;
 thread_local bool recur = false;
 
 void on_malloc(size_t size, void *addr) {
-  if (!addr || recur)
+  if (!on || !addr || recur)
     return;
   recur = true;
 
@@ -79,14 +79,16 @@ void on_malloc(size_t size, void *addr) {
 }
 
 void on_free(void *addr) {
-  if (recur)
+  if (!on || recur)
     return;
   recur = true;
 
   std::lock_guard<std::mutex> lk(info_mtx);
-  auto iter = addr2info.find(addr);
-  if (iter != addr2info.end())
-    addr2info.erase(iter);
+  if (addr2info.bucket_count()) {
+    auto iter = addr2info.find(addr);
+    if (iter != addr2info.end())
+      addr2info.erase(iter);
+  }
 
   recur = false;
 }
@@ -107,12 +109,17 @@ void dump() {
   for (auto &p : addr2info)
     p.second.dump(fout);
   fclose(fout);
-  fprintf(stderr, "[LEAK] dumped %zu\n", addr2info.size());
 }
 
-__attribute__((constructor)) void init() { backup(); }
+__attribute__((constructor)) void init() {
+  backup();
+  on = true;
+}
 
-__attribute__((destructor)) void fini() { dump(); }
+__attribute__((destructor)) void fini() {
+  on = false;
+  dump();
+}
 
 } // namespace
 

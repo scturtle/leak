@@ -3,7 +3,7 @@
 def parse_map_entry(line):
     line = line[:-1].decode()
     rg, *_, name = line.split()
-    if name == '[heap]' or name[0] == '/':
+    if name[0] == '/':
         return [int(c, 16) for c in rg.split('-')] + [name]
     return None
 
